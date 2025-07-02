@@ -23,8 +23,9 @@ FROM python:3.12-slim-bookworm
 # Set working directory
 WORKDIR /app
 
-# Copy the virtual environment from builder stage
+# Copy the virtual environment AND source code from builder stage
 COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app /app
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
@@ -33,5 +34,5 @@ ENV PATH="/app/.venv/bin:$PATH"
 ENV PINECONE_API_KEY="pcsk_4gxJPP_qxeZFN4xk1Ma94EWHzAoddBfArkWjzCsUuJJ5iwRwkGHqcuqTTkZAYkoxPVogF"
 ENV PINECONE_INDEX_NAME="memory-index"
 
-# Entry point - use the correct module name and pass required args
+# Entry point
 ENTRYPOINT ["mcp-pinecone", "--index-name", "${PINECONE_INDEX_NAME}", "--api-key", "${PINECONE_API_KEY}"]
