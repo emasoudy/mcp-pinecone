@@ -1,47 +1,108 @@
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-import asyncio
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 import json
-import subprocess
-import os
-import sys
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.get("/")
-async def health_check():
-    return {"status": "ok", "service": "mcp-pinecone-web", "version": "1.0.0"}
+async def mcp_root():
+    """MCP protocol initialization endpoint"""
+    return {
+        "jsonrpc": "2.0",
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+                "tools": {
+                    "listChanged": True
+                },
+                "resources": {
+                    "subscribe": True,
+                    "listChanged": True
+                }
+            },
+            "serverInfo": {
+                "name": "pinecone-mcp",
+                "version": "1.0.0"
+            }
+        }
+    }
+
+@app.post("/")
+async def mcp_handler(request: Request):
+    """Handle MCP JSON-RPC requests"""
+    body = await request.json()
+    
+    if body.get("method") == "tools/list":
+        return {
+            "jsonrpc": "2.0",
+            "id": body.get("id"),
+            "result": {
+                "tools": [
+                    {
+                        "name": "semantic-search",
+                        "description": "Search for information in the knowledge base",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "Search query"}
+                            },
+                            "required": ["query"]
+                        }
+                    },
+                    {
+                        "name": "process-document", 
+                        "description": "Add document to knowledge base",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "content": {"type": "string", "description": "Document content"},
+                                "title": {"type": "string", "description": "Document title"}
+                            },
+                            "required": ["content"]
+                        }
+                    }
+                ]
+            }
+        }
+    
+    elif body.get("method") == "tools/call":
+        tool_name = body.get("params", {}).get("name")
+        arguments = body.get("params", {}).get("arguments", {})
+        
+        # Here you would integrate with your actual MCP pinecone functions
+        return {
+            "jsonrpc": "2.0", 
+            "id": body.get("id"),
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Tool {tool_name} called with args: {arguments}"
+                    }
+                ]
+            }
+        }
+    
+    return {
+        "jsonrpc": "2.0",
+        "id": body.get("id"),
+        "error": {
+            "code": -32601,
+            "message": "Method not found"
+        }
+    }
 
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
-
-@app.post("/mcp")
-async def mcp_endpoint(request: dict):
-    """Handle MCP requests via HTTP"""
-    try:
-        # Import and use the MCP server directly
-        from mcp_pinecone.server import app as mcp_app
-        
-        # Process the MCP request
-        response = await mcp_app.handle_request(request)
-        return response
-        
-    except Exception as e:
-        return {"error": str(e), "type": "mcp_error"}
-
-@app.get("/tools")
-async def list_tools():
-    """List available MCP tools"""
-    return {
-        "tools": [
-            "semantic-search",
-            "process-document", 
-            "list-documents",
-            "read-document",
-            "pinecone-stats"
-        ]
-    }
 
 if __name__ == "__main__":
     import uvicorn
