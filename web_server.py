@@ -237,110 +237,95 @@ async def mcp_handler(request: Request):
                         }
                     }
             
-elif tool_name == "process-document":
-    content = arguments.get("content", "")
-    title = arguments.get("title", "Untitled Document")
-    metadata = arguments.get("metadata", {})
-    
-    try:
-        # Method 1: Use MCP's built-in processing (handles embeddings automatically)
-        document_data = {
-            "content": content,
-            "title": title,
-            "metadata": metadata
-        }
-        
-        # Let the MCP client handle embedding generation
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, 
-            lambda: pc_client.process_document_sync(document_data)
-        )
-        
-        return {
-            "jsonrpc": "2.0",
-            "id": body.get("id"),
-            "result": {
-                "content": [{
-                    "type": "text",
-                    "text": f"✅ Document stored successfully in Pinecone!\n\n📝 Title: {title}\n📄 Content length: {len(content)} characters\n🗂️ Stored in index: memory-index\n🆔 Embeddings generated automatically\n\n🎯 Your strategic insight is now searchable via semantic similarity!"
-                }]
-            }
-        }
-        
-    except AttributeError:
-        # Method 2: Call the original MCP server functions directly
-        try:
-            # Import the server tools directly
-            from mcp_pinecone.server import process_document_tool
-            
-            tool_args = {
-                "content": content,
-                "title": title,
-                "metadata": metadata
-            }
-            
-            result = process_document_tool(tool_args)
-            
-            return {
-                "jsonrpc": "2.0",
-                "id": body.get("id"),
-                "result": {
-                    "content": [{
-                        "type": "text",
-                        "text": f"✅ Document processed via MCP server!\n\n📝 Title: {title}\n📄 Content: {content[:100]}...\n🗂️ Metadata tags: {len(metadata)} fields\n\n🎯 Your knowledge is now stored with proper embeddings!"
-                    }]
-                }
-            }
-            
-        except Exception as server_error:
-            # Method 3: Generate embeddings using Pinecone's inference API
-            try:
-                # Use Pinecone's built-in embedding generation
-                embedding_response = pc_client.pc.inference.embed(
-                    model="multilingual-e5-large",
-                    inputs=[content],
-                    parameters={"input_type": "passage"}
-                )
+            elif tool_name == "process-document":
+                content = arguments.get("content", "")
+                title = arguments.get("title", "Untitled Document")
+                metadata = arguments.get("metadata", {})
                 
-                embedding_vector = embedding_response[0]['values']
-                doc_id = f"doc_{int(time.time())}_{abs(hash(content)) % 10000}"
+                try:
+                    # Method 1: Use Pinecone's built-in embedding generation
+                    try:
+                        # Generate embeddings using Pinecone's inference API
+                        embedding_response = pc_client.pc.inference.embed(
+                            model="multilingual-e5-large",
+                            inputs=[content],
+                            parameters={"input_type": "passage"}
+                        )
+                        
+                        embedding_vector = embedding_response[0]['values']
+                        doc_id = f"doc_{int(time.time())}_{abs(hash(content)) % 10000}"
+                        
+                        # Store with proper vector format
+                        vector_data = {
+                            "id": doc_id,
+                            "values": embedding_vector,
+                            "metadata": {
+                                "title": title,
+                                "content": content,
+                                **metadata
+                            }
+                        }
+                        
+                        pc_client.index.upsert(vectors=[vector_data])
+                        
+                        return {
+                            "jsonrpc": "2.0",
+                            "id": body.get("id"),
+                            "result": {
+                                "content": [{
+                                    "type": "text",
+                                    "text": f"✅ Document stored with embeddings!\n\n📝 Title: {title}\n📄 Content length: {len(content)} characters\n🔢 Vector dimensions: {len(embedding_vector)}\n🗂️ Stored in index: memory-index\n🆔 Document ID: {doc_id}\n\n🎯 Your strategic insight is now searchable!"
+                                }]
+                            }
+                        }
+                        
+                    except Exception as embed_error:
+                        # Fallback: try the MCP process_document method
+                        try:
+                            document_data = {
+                                "content": content,
+                                "title": title,
+                                "metadata": metadata
+                            }
+                            
+                            # Try MCP's built-in processing
+                            result = pc_client.process_document_sync(document_data)
+                            
+                            return {
+                                "jsonrpc": "2.0",
+                                "id": body.get("id"),
+                                "result": {
+                                    "content": [{
+                                        "type": "text",
+                                        "text": f"✅ Document processed via MCP!\n\n📝 Title: {title}\n📄 Content: {content[:100]}...\n🗂️ Metadata tags: {len(metadata)} fields\n\n🎯 Your knowledge is now stored with proper embeddings!"
+                                    }]
+                                }
+                            }
+                            
+                        except Exception as mcp_error:
+                            return {
+                                "jsonrpc": "2.0",
+                                "id": body.get("id"),
+                                "result": {
+                                    "content": [{
+                                        "type": "text",
+                                        "text": f"❌ Both embedding methods failed:\n\nEmbed API: {str(embed_error)}\nMCP Method: {str(mcp_error)}\n\nDocument: '{title}'\nContent: {content[:100]}...\n\nPlease check Pinecone configuration."
+                                    }]
+                                }
+                            }
                 
-                # Store with proper vector format
-                vector_data = {
-                    "id": doc_id,
-                    "values": embedding_vector,
-                    "metadata": {
-                        "title": title,
-                        "content": content,
-                        **metadata
+                except Exception as process_error:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": body.get("id"),
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": f"❌ Document processing failed: {str(process_error)}\n\nDocument: '{title}'\nContent length: {len(content)} characters\n\nPlease check Pinecone connection and try again."
+                            }]
+                        }
                     }
-                }
-                
-                pc_client.index.upsert(vectors=[vector_data])
-                
-                return {
-                    "jsonrpc": "2.0",
-                    "id": body.get("id"),
-                    "result": {
-                        "content": [{
-                            "type": "text",
-                            "text": f"✅ Document stored with embeddings!\n\n📝 Title: {title}\n📄 Content length: {len(content)} characters\n🔢 Vector dimensions: {len(embedding_vector)}\n🗂️ Stored in index: memory-index\n🆔 Document ID: {doc_id}\n\n🎯 Your strategic insight is now searchable!"
-                        }]
-                    }
-                }
-                
-            except Exception as embed_error:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": body.get("id"),
-                    "result": {
-                        "content": [{
-                            "type": "text",
-                            "text": f"❌ Embedding generation failed: {str(embed_error)}\n\nDocument: '{title}'\nContent: {content[:100]}...\n\nThe system needs to generate vector embeddings for storage. Please check Pinecone inference API access."
-                        }]
-                    }
-                }
-        
+            
             elif tool_name == "list-documents":
                 limit = arguments.get("limit", 10)
                 
