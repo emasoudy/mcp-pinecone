@@ -31,8 +31,8 @@ COPY --from=builder /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Set environment variables for Pinecone
-ENV PINECONE_API_KEY=""
-ENV PINECONE_INDEX_NAME=""
+ENV PINECONE_API_KEY="pcsk_7HE3B3_EDLPAQ6xU5cup9Ypcu6kdu6x7wpKaZMcnPpw3LW87n5deV5JCAqqHWHBpAxrLnt"
+ENV PINECONE_INDEX_NAME="memory-index"
 
 # Entry point
 ENTRYPOINT ["mcp-pinecone", "--index-name", "${PINECONE_INDEX_NAME}", "--api-key", "${PINECONE_API_KEY}"]
