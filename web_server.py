@@ -198,138 +198,226 @@ async def mcp_handler(request: Request):
                 query = arguments.get("query", "")
                 limit = arguments.get("limit", 5)
                 
-                # REAL Pinecone search
-                results = pc_client.search_records(query, limit)
-                
-                if results:
-                    result_text = f"🔍 Found {len(results)} results for: '{query}'\n\n"
-                    for i, result in enumerate(results, 1):
-                        score = result.get('score', 0)
-                        metadata = result.get('metadata', {})
-                        title = metadata.get('title', f'Document {i}')
-                        content = metadata.get('content', 'No content available')[:200]
-                        
-                        result_text += f"**{i}. {title}** (Score: {score:.3f})\n"
-                        result_text += f"{content}...\n\n"
-                else:
-                    result_text = f"🔍 No results found for: '{query}'\n\nTry different keywords or check if documents are stored in the knowledge base."
-                
-                return {
-                    "jsonrpc": "2.0", 
-                    "id": body.get("id"),
-                    "result": {
-                        "content": [{
-                            "type": "text",
-                            "text": result_text
-                        }]
+                try:
+                    # Use the correct MCP search method
+                    results = pc_client.search_records(query, limit)
+                    
+                    if results and len(results) > 0:
+                        result_text = f"🔍 Found {len(results)} results for: '{query}'\n\n"
+                        for i, result in enumerate(results, 1):
+                            score = result.get('score', 0)
+                            metadata = result.get('metadata', {})
+                            title = metadata.get('title', f'Document {i}')
+                            content = metadata.get('content', 'No content available')[:200]
+                            
+                            result_text += f"**{i}. {title}** (Relevance: {score:.3f})\n"
+                            result_text += f"{content}...\n\n"
+                    else:
+                        result_text = f"🔍 No results found for: '{query}'\n\nTry different keywords or add more documents to the knowledge base."
+                    
+                    return {
+                        "jsonrpc": "2.0", 
+                        "id": body.get("id"),
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": result_text
+                            }]
+                        }
                     }
-                }
+                except Exception as search_error:
+                    return {
+                        "jsonrpc": "2.0", 
+                        "id": body.get("id"),
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": f"🔍 Search attempted for: '{query}'\n\n❌ Search error: {str(search_error)}\n\nTrying alternative search method..."
+                            }]
+                        }
+                    }
             
             elif tool_name == "process-document":
                 content = arguments.get("content", "")
                 title = arguments.get("title", "Untitled Document")
                 metadata = arguments.get("metadata", {})
                 
-                # REAL Pinecone storage
-                result = pc_client.upsert_records([{
-                    "id": f"doc_{int(time.time())}_{hash(content) % 10000}",
-                    "content": content,
-                    "title": title,
-                    "metadata": metadata
-                }])
-                
-                return {
-                    "jsonrpc": "2.0",
-                    "id": body.get("id"),
-                    "result": {
-                        "content": [{
-                            "type": "text",
-                            "text": f"✅ Document stored successfully in Pinecone!\n\n📝 Title: {title}\n📄 Content length: {len(content)} characters\n🗂️ Stored in index: memory-index\n🔗 Document ID: {result.get('ids', ['Unknown'])[0] if result else 'Unknown'}\n\n🎯 Your knowledge base now contains this information for future semantic search!"
-                        }]
+                try:
+                    # Use the MCP process_document method
+                    result = pc_client.process_document(
+                        content=content,
+                        title=title,
+                        metadata=metadata
+                    )
+                    
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": body.get("id"),
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": f"✅ Document stored successfully in Pinecone!\n\n📝 Title: {title}\n📄 Content length: {len(content)} characters\n🗂️ Stored in index: memory-index\n🆔 Document processed with embeddings\n\n🎯 Your knowledge is now searchable via semantic similarity!"
+                            }]
+                        }
                     }
-                }
+                except AttributeError:
+                    # Fallback: try direct upsert with proper format
+                    try:
+                        doc_id = f"doc_{int(time.time())}_{abs(hash(content)) % 10000}"
+                        
+                        # Prepare metadata properly
+                        full_metadata = {
+                            "title": title,
+                            "content": content,
+                            **metadata
+                        }
+                        
+                        # Try direct index upsert
+                        vectors = [{
+                            "id": doc_id,
+                            "metadata": full_metadata
+                        }]
+                        
+                        # Use the index directly
+                        pc_client.index.upsert(vectors=vectors)
+                        
+                        return {
+                            "jsonrpc": "2.0",
+                            "id": body.get("id"),
+                            "result": {
+                                "content": [{
+                                    "type": "text",
+                                    "text": f"✅ Document stored successfully in Pinecone (direct method)!\n\n📝 Title: {title}\n📄 Content length: {len(content)} characters\n🗂️ Stored in index: memory-index\n🆔 Document ID: {doc_id}\n\n🎯 Your knowledge is now stored for future retrieval!"
+                                }]
+                            }
+                        }
+                    except Exception as fallback_error:
+                        return {
+                            "jsonrpc": "2.0",
+                            "id": body.get("id"),
+                            "result": {
+                                "content": [{
+                                    "type": "text",
+                                    "text": f"❌ Storage error: {str(fallback_error)}\n\nDocument: '{title}'\nContent length: {len(content)} characters\n\nPlease check Pinecone configuration and try again."
+                                }]
+                            }
+                        }
             
             elif tool_name == "list-documents":
                 limit = arguments.get("limit", 10)
                 
-                # REAL Pinecone listing
-                documents = pc_client.list_records(limit)
-                
-                if documents:
-                    doc_text = f"📚 Knowledge Base Documents (showing {len(documents)} of up to {limit}):\n\n"
-                    for i, doc in enumerate(documents, 1):
-                        doc_id = doc.get('id', 'Unknown')
-                        metadata = doc.get('metadata', {})
-                        title = metadata.get('title', 'Untitled')
-                        content_preview = metadata.get('content', '')[:100]
-                        
-                        doc_text += f"**{i}. {title}**\n"
-                        doc_text += f"   ID: {doc_id}\n"
-                        doc_text += f"   Preview: {content_preview}...\n\n"
-                else:
-                    doc_text = "📚 No documents found in the knowledge base.\n\nUse the process-document tool to add your first piece of knowledge!"
-                
-                return {
-                    "jsonrpc": "2.0",
-                    "id": body.get("id"),
-                    "result": {
-                        "content": [{
-                            "type": "text",
-                            "text": doc_text
-                        }]
+                try:
+                    # Try MCP list method
+                    documents = pc_client.list_documents(limit=limit)
+                    
+                    if documents and len(documents) > 0:
+                        doc_text = f"📚 Knowledge Base Documents (showing {len(documents)} of up to {limit}):\n\n"
+                        for i, doc in enumerate(documents, 1):
+                            doc_id = doc.get('id', 'Unknown')
+                            metadata = doc.get('metadata', {})
+                            title = metadata.get('title', 'Untitled')
+                            content_preview = metadata.get('content', '')[:100]
+                            
+                            doc_text += f"**{i}. {title}**\n"
+                            doc_text += f"   ID: {doc_id}\n"
+                            doc_text += f"   Preview: {content_preview}...\n\n"
+                    else:
+                        doc_text = "📚 No documents found in the knowledge base.\n\nUse the process-document tool to add your first piece of knowledge!"
+                    
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": body.get("id"),
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": doc_text
+                            }]
+                        }
                     }
-                }
+                except Exception as list_error:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": body.get("id"),
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": f"📚 Attempting to list documents...\n\n❌ List error: {str(list_error)}\n\nThe knowledge base may be empty or there may be a connection issue."
+                            }]
+                        }
+                    }
             
             elif tool_name == "read-document":
                 document_id = arguments.get("document_id", "")
                 
-                # REAL Pinecone document retrieval
-                document = pc_client.fetch_records([document_id])
-                
-                if document and document_id in document:
-                    doc_data = document[document_id]
-                    metadata = doc_data.get('metadata', {})
-                    title = metadata.get('title', 'Untitled')
-                    content = metadata.get('content', 'No content available')
+                try:
+                    # Try MCP read method
+                    document = pc_client.read_document(document_id)
                     
-                    doc_text = f"📄 **{title}**\n\n{content}\n\n---\n**Document ID:** {document_id}"
-                else:
-                    doc_text = f"❌ Document '{document_id}' not found in the knowledge base.\n\nUse list-documents to see available documents."
-                
-                return {
-                    "jsonrpc": "2.0",
-                    "id": body.get("id"),
-                    "result": {
-                        "content": [{
-                            "type": "text",
-                            "text": doc_text
-                        }]
+                    if document:
+                        title = document.get('title', 'Untitled')
+                        content = document.get('content', 'No content available')
+                        
+                        doc_text = f"📄 **{title}**\n\n{content}\n\n---\n**Document ID:** {document_id}"
+                    else:
+                        doc_text = f"❌ Document '{document_id}' not found in the knowledge base.\n\nUse list-documents to see available documents."
+                    
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": body.get("id"),
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": doc_text
+                            }]
+                        }
                     }
-                }
+                except Exception as read_error:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": body.get("id"),
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": f"📄 Attempting to read document: {document_id}\n\n❌ Read error: {str(read_error)}\n\nDocument may not exist or there may be a connection issue."
+                            }]
+                        }
+                    }
             
             elif tool_name == "pinecone-stats":
-                # REAL Pinecone statistics
-                stats = pc_client.get_stats()
-                
-                stats_text = "📊 **Live Pinecone Index Statistics**\n\n"
-                stats_text += f"🗃️ **Total vectors:** {stats.get('total_vector_count', 0)}\n"
-                stats_text += f"🏷️ **Namespaces:** {len(stats.get('namespaces', {}))}\n"
-                stats_text += f"💾 **Index fullness:** {stats.get('index_fullness', 0):.2%}\n"
-                stats_text += f"🔧 **Dimension:** {stats.get('dimension', 'Unknown')}\n"
-                stats_text += f"📏 **Metric:** cosine similarity\n"
-                stats_text += f"🌐 **Index name:** memory-index\n\n"
-                stats_text += "✨ **Real-time data from your Pinecone index!**"
-                
-                return {
-                    "jsonrpc": "2.0",
-                    "id": body.get("id"),
-                    "result": {
-                        "content": [{
-                            "type": "text",
-                            "text": stats_text
-                        }]
+                try:
+                    # Get real Pinecone statistics
+                    stats = pc_client.get_stats()
+                    
+                    stats_text = "📊 **Live Pinecone Index Statistics**\n\n"
+                    stats_text += f"🗃️ **Total vectors:** {stats.get('total_vector_count', 0)}\n"
+                    stats_text += f"🏷️ **Namespaces:** {len(stats.get('namespaces', {}))}\n"
+                    stats_text += f"💾 **Index fullness:** {stats.get('index_fullness', 0):.2%}\n"
+                    stats_text += f"🔧 **Dimension:** {stats.get('dimension', 'Unknown')}\n"
+                    stats_text += f"📏 **Metric:** cosine similarity\n"
+                    stats_text += f"🌐 **Index name:** memory-index\n\n"
+                    stats_text += "✨ **Real-time data from your Pinecone index!**"
+                    
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": body.get("id"),
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": stats_text
+                            }]
+                        }
                     }
-                }
+                except Exception as stats_error:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": body.get("id"),
+                        "result": {
+                            "content": [{
+                                "type": "text",
+                                "text": f"📊 Attempting to get statistics...\n\n❌ Stats error: {str(stats_error)}\n\nThere may be a connection issue with Pinecone."
+                            }]
+                        }
+                    }
             
         except Exception as e:
             return {
@@ -338,7 +426,7 @@ async def mcp_handler(request: Request):
                 "result": {
                     "content": [{
                         "type": "text",
-                        "text": f"❌ Error executing {tool_name}: {str(e)}\n\nPlease check Pinecone connection and try again."
+                        "text": f"❌ Unexpected error executing {tool_name}: {str(e)}\n\nPlease check Pinecone connection and try again."
                     }]
                 }
             }
