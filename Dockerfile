@@ -33,5 +33,5 @@ ENV PATH="/app/.venv/bin:$PATH"
 ENV PINECONE_API_KEY=""
 ENV PINECONE_INDEX_NAME=""
 
-# Entry point for running the MCP server
-ENTRYPOINT ["python", "-m", "mcp_pinecone"]
+# Entry point - use the correct module name and pass required args
+ENTRYPOINT ["mcp-pinecone", "--index-name", "${PINECONE_INDEX_NAME}", "--api-key", "${PINECONE_API_KEY}"]
