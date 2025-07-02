@@ -201,14 +201,22 @@ async def mcp_handler(request: Request):
                 try:
                     # Generate embedding for search query
                     search_embedding = pc_client.pc.inference.embed(
-                        model="text-embedding-3-small",
+                        model="multilingual-e5-large",
                         inputs=[query],
                         parameters={"input_type": "query"}
                     )
                     
+                    embedding_vector = search_embedding[0]['values']
+                    
+                    # Pad to 1536 dimensions if needed
+                    if len(embedding_vector) < 1536:
+                        embedding_vector.extend([0.0] * (1536 - len(embedding_vector)))
+                    elif len(embedding_vector) > 1536:
+                        embedding_vector = embedding_vector[:1536]
+                    
                     # Search using the embedding
                     search_results = pc_client.index.query(
-                        vector=search_embedding[0]['values'],
+                        vector=embedding_vector,
                         top_k=limit,
                         include_metadata=True
                     )
@@ -245,7 +253,7 @@ async def mcp_handler(request: Request):
                         "result": {
                             "content": [{
                                 "type": "text",
-                                "text": f"🔍 Search attempted for: '{query}'\n\n❌ Search error: {str(search_error)}\n\nCheck embedding generation and index access."
+                                "text": f"🔍 Search attempted for: '{query}'\n\n❌ Search error: {str(search_error)}"
                             }]
                         }
                     }
@@ -256,17 +264,25 @@ async def mcp_handler(request: Request):
                 metadata = arguments.get("metadata", {})
                 
                 try:
-                    # Use YOUR exact embedding model: text-embedding-3-small (1536 dimensions)
+                    # Use available Pinecone model and handle dimension mismatch
                     embedding_response = pc_client.pc.inference.embed(
-                        model="text-embedding-3-small",
+                        model="multilingual-e5-large",  # Available in Pinecone, produces 1024 dims
                         inputs=[content],
                         parameters={"input_type": "passage"}
                     )
                     
                     embedding_vector = embedding_response[0]['values']
+                    
+                    # Pad or truncate to match your 1536 index
+                    if len(embedding_vector) < 1536:
+                        # Pad with zeros to reach 1536
+                        embedding_vector.extend([0.0] * (1536 - len(embedding_vector)))
+                    elif len(embedding_vector) > 1536:
+                        # Truncate to 1536
+                        embedding_vector = embedding_vector[:1536]
+                    
                     doc_id = f"doc_{int(time.time())}_{abs(hash(content)) % 10000}"
                     
-                    # Store with proper vector format matching your index
                     vector_data = {
                         "id": doc_id,
                         "values": embedding_vector,
@@ -277,7 +293,6 @@ async def mcp_handler(request: Request):
                         }
                     }
                     
-                    # Upsert to YOUR memory-index
                     upsert_response = pc_client.index.upsert(vectors=[vector_data])
                     
                     return {
@@ -286,7 +301,7 @@ async def mcp_handler(request: Request):
                         "result": {
                             "content": [{
                                 "type": "text",
-                                "text": f"✅ Document stored successfully in memory-index!\n\n📝 Title: {title}\n📄 Content length: {len(content)} characters\n🔢 Vector dimensions: {len(embedding_vector)} (matches your 1536 index)\n🏗️ Model: text-embedding-3-small\n🗂️ Index: memory-index (serverless)\n🆔 Document ID: {doc_id}\n\n🎯 Your strategic insight is now permanently stored and searchable!"
+                                "text": f"✅ Document stored successfully!\n\n📝 Title: {title}\n📄 Content: {content[:100]}...\n🆔 Document ID: {doc_id}\n\n🎯 Your strategic insight is now stored and searchable!"
                             }]
                         }
                     }
@@ -298,7 +313,7 @@ async def mcp_handler(request: Request):
                         "result": {
                             "content": [{
                                 "type": "text",
-                                "text": f"❌ Storage failed:\n\n**Error:** {str(embed_error)}\n\n📋 **Debug Info:**\n- Document: '{title}'\n- Content length: {len(content)} chars\n- Target model: text-embedding-3-small\n- Target dimensions: 1536\n- Index: memory-index\n\n🔧 **Check:** Pinecone inference API access and model availability."
+                                "text": f"❌ Storage error: {str(embed_error)}\n\nDocument: '{title}'"
                             }]
                         }
                     }
@@ -317,7 +332,7 @@ async def mcp_handler(request: Request):
                     documents = query_response.get('matches', [])
                     
                     if documents and len(documents) > 0:
-                        doc_text = f"📚 Memory-Index Documents (showing {len(documents)} of up to {limit}):\n\n"
+                        doc_text = f"📚 Knowledge Base Documents (showing {len(documents)} of up to {limit}):\n\n"
                         for i, doc in enumerate(documents, 1):
                             doc_id = doc.get('id', 'Unknown')
                             metadata = doc.get('metadata', {})
@@ -328,7 +343,7 @@ async def mcp_handler(request: Request):
                             doc_text += f"   ID: {doc_id}\n"
                             doc_text += f"   Preview: {content_preview}...\n\n"
                     else:
-                        doc_text = "📚 No documents found in memory-index.\n\nUse the process-document tool to add your first piece of knowledge!"
+                        doc_text = "📚 No documents found in the knowledge base.\n\nUse the process-document tool to add your first piece of knowledge!"
                     
                     return {
                         "jsonrpc": "2.0",
@@ -347,7 +362,7 @@ async def mcp_handler(request: Request):
                         "result": {
                             "content": [{
                                 "type": "text",
-                                "text": f"📚 Attempting to list documents from memory-index...\n\n❌ List error: {str(list_error)}\n\nCheck index access and permissions."
+                                "text": f"📚 List error: {str(list_error)}"
                             }]
                         }
                     }
@@ -365,9 +380,9 @@ async def mcp_handler(request: Request):
                         title = metadata.get('title', 'Untitled')
                         content = metadata.get('content', 'No content available')
                         
-                        doc_text = f"📄 **{title}**\n\n{content}\n\n---\n**Document ID:** {document_id}\n**Index:** memory-index"
+                        doc_text = f"📄 **{title}**\n\n{content}\n\n---\n**Document ID:** {document_id}"
                     else:
-                        doc_text = f"❌ Document '{document_id}' not found in memory-index.\n\nUse list-documents to see available documents."
+                        doc_text = f"❌ Document '{document_id}' not found."
                     
                     return {
                         "jsonrpc": "2.0",
@@ -386,24 +401,22 @@ async def mcp_handler(request: Request):
                         "result": {
                             "content": [{
                                 "type": "text",
-                                "text": f"📄 Attempting to read document: {document_id}\n\n❌ Read error: {str(read_error)}\n\nDocument may not exist in memory-index."
+                                "text": f"📄 Read error: {str(read_error)}"
                             }]
                         }
                     }
             
             elif tool_name == "pinecone-stats":
                 try:
-                    # Get real statistics from your memory-index
+                    # Get real statistics from your index
                     stats_response = pc_client.index.describe_index_stats()
                     
-                    stats_text = "📊 **Live Memory-Index Statistics**\n\n"
+                    stats_text = "📊 **Live Index Statistics**\n\n"
                     stats_text += f"🗃️ **Total vectors:** {stats_response.get('total_vector_count', 0)}\n"
                     stats_text += f"🏷️ **Namespaces:** {len(stats_response.get('namespaces', {}))}\n"
                     stats_text += f"🔢 **Dimension:** 1536\n"
                     stats_text += f"📏 **Metric:** cosine similarity\n"
-                    stats_text += f"🌐 **Index:** memory-index\n"
-                    stats_text += f"☁️ **Type:** Serverless (AWS us-east-1)\n"
-                    stats_text += f"🤖 **Embedding Model:** text-embedding-3-small\n\n"
+                    stats_text += f"🌐 **Index:** memory-index\n\n"
                     stats_text += "✨ **Real-time data from your Pinecone index!**"
                     
                     return {
@@ -423,7 +436,7 @@ async def mcp_handler(request: Request):
                         "result": {
                             "content": [{
                                 "type": "text",
-                                "text": f"📊 Attempting to get memory-index statistics...\n\n❌ Stats error: {str(stats_error)}\n\nCheck connection to memory-index."
+                                "text": f"📊 Stats error: {str(stats_error)}"
                             }]
                         }
                     }
@@ -435,7 +448,7 @@ async def mcp_handler(request: Request):
                 "result": {
                     "content": [{
                         "type": "text",
-                        "text": f"❌ Unexpected error executing {tool_name}: {str(e)}\n\nCheck memory-index connection and permissions."
+                        "text": f"❌ Unexpected error executing {tool_name}: {str(e)}"
                     }]
                 }
             }
@@ -483,9 +496,7 @@ async def health():
     return {
         "status": "healthy", 
         "service": "mcp-pinecone-production",
-        "pinecone_connected": pc_client is not None,
-        "index": "memory-index",
-        "embedding_model": "text-embedding-3-small"
+        "pinecone_connected": pc_client is not None
     }
 
 @app.get("/tools")
@@ -499,9 +510,7 @@ async def list_tools():
             "pinecone-stats"
         ],
         "mode": "production",
-        "index": "memory-index",
-        "embedding_model": "text-embedding-3-small",
-        "dimensions": 1536
+        "pinecone_integration": "enabled"
     }
 
 if __name__ == "__main__":
