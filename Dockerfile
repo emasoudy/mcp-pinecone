@@ -6,7 +6,9 @@ COPY . /app
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 
+# Install FastAPI and Uvicorn using UV
 RUN --mount=type=cache,target=/root/.cache/uv \
+    uv add fastapi uvicorn && \
     uv sync --frozen --no-dev
 
 FROM python:3.12-slim-bookworm
@@ -14,9 +16,6 @@ FROM python:3.12-slim-bookworm
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app /app
-
-# Install FastAPI and Uvicorn
-RUN pip install fastapi uvicorn
 
 ENV PATH="/app/.venv/bin:$PATH"
 
