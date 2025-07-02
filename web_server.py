@@ -52,16 +52,16 @@ async def sse_endpoint():
         yield f"data: {json.dumps(init_message)}\n\n"
         
         # Keep connection alive with heartbeat
-        try:
-            while True:
+        while True:
+            try:
                 await asyncio.sleep(30)
                 heartbeat = {
                     'type': 'heartbeat', 
                     'timestamp': str(time.time())
                 }
                 yield f"data: {json.dumps(heartbeat)}\n\n"
-        except asyncio.CancelledError:
-            break
+            except asyncio.CancelledError:
+                return
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -164,7 +164,6 @@ async def mcp_handler(request: Request):
         tool_name = body.get("params", {}).get("name")
         arguments = body.get("params", {}).get("arguments", {})
         
-        # Simulate tool responses (you would integrate with actual MCP pinecone functions here)
         if tool_name == "semantic-search":
             query = arguments.get("query", "")
             return {
@@ -267,7 +266,6 @@ async def health():
 
 @app.get("/tools")
 async def list_tools():
-    """List available MCP tools for debugging"""
     return {
         "tools": [
             "semantic-search",
@@ -275,13 +273,7 @@ async def list_tools():
             "list-documents",
             "read-document",
             "pinecone-stats"
-        ],
-        "endpoints": {
-            "root": "/",
-            "sse": "/sse", 
-            "health": "/health",
-            "tools": "/tools"
-        }
+        ]
     }
 
 if __name__ == "__main__":
